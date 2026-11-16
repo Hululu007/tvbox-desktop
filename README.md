@@ -1,0 +1,159 @@
+# TVBox Desktop（Tauri 2 重写版）
+
+原 [hgtuj5688/tvbox-desktop](https://github.com/hgtuj5688/tvbox-desktop)（Electron 44 + React 19）的**全功能对齐重写版**：使用 **Tauri 2 + Rust + React 18 + TypeScript**，目标是更小的安装包（约 10MB 级别 vs Electron 100MB+）、更低的内存占用与三平台原生打包。
+
+> 本项目遵循原项目 MIT 协议，内置订阅示例改写自原项目 `samples/public-sources.json` 并注明出处。
+
+## 功能对照
+
+| 功能 | 原版（Electron） | 本重写版（Tauri 2） |
+| --- | --- | --- |
+| 订阅源管理（URL / 本地 / 粘贴 / 刷新 / 激活） | ✅ | ✅ |
+| TVBox A/B 双格式配置兼容 | ✅ | ✅ |
+| 站点类型矩阵（cms/api/html 支持，spider/unknown 灰显） | ✅ | ✅ |
+| 分类浏览 + 分页 | ✅ | ✅ |
+| 聚合搜索（并发 + 超时 + 进度事件） | ✅ | ✅（Rust tokio 并发，6 路并发、12s 单站超时） |
+| 详情 + 多播放源 + 选集 | ✅ | ✅ |
+| ArtPlayer + hls.js 播放 | ✅ | ✅ |
+| 观看进度记忆 + 自动续播 | ✅ | ✅（8 秒节流上报，详情页自动恢复） |
+| 收藏 / 历史 | ✅ | ✅ |
+| 直播电视（m3u / txt，多线路合并） | ✅ | ✅ |
+| 直播线路测速 | ✅ | ✅（Rust 并发测速，Range 请求 6s 超时） |
+| 虎牙/抖音房间号（huya:// douyin://） | ✅ | ✅（页面结构解析，实验性） |
+| 首页推荐位（tvboxDesktop.home.sections） | ✅ | ✅（无 sections 时自动回退到站点最新列表） |
+| 网页线路嗅探 | ✅（Electron webContents） | ⚠ 简易版：HTML 直取正则提取 + Webview hook 窗口（详见下文） |
+| 一键外部播放器 | ✅ | ⚠ v2 规划（后端已内置 opener 插件，前端入口待接） |
+
+## 技术栈
+
+- **桌面壳**：Tauri 2（WebView2 / WKWebView / webkit2gtk）
+- **核心逻辑**：Rust（reqwest + rustls、tokio、scraper、encoding_rs、regex）
+- **前端**：React 18 + TypeScript + Vite 5 + zustand + react-router（Hash 模式）
+- **播放**：ArtPlayer 5 + hls.js 1.5
+- **本地存储**：`app_data_dir` 下 JSON 文件（subscriptions / favorites / history）
+
+## 目录结构
+
+```
+├── index.html                  # Vite 入口
+├── package.json                # 前端依赖 + tauri CLI 脚本
+├── vite.config.ts
+├── src/                        # React 前端
+│   ├── api.ts                  # invoke / event 封装（与 Rust 命令一一对应）
+│   ├── types.ts                # 与 Rust serde 模型对齐的类型
+│   ├── store.ts                # zustand 全局状态 + toast
+│   ├── components/             # Sidebar / PosterCard / Player(ArtPlayer+hls.js)
+│   └── pages/                  # Home / Sources / Search / Detail / Live / Favorites / History / Settings
+├── src-tauri/
+│   ├── Cargo.toml
+│   ├── tauri.conf.json         # 窗口/打包/图标配置（NSIS + dmg + deb/appimage）
+│   ├── capabilities/default.json
+│   └── src/
+│       ├── lib.rs              # 装配 + 25 个 command 注册
+│       ├── models.rs           # TVBox 配置 serde 模型（A/B 双格式）
+│       ├── cms.rs              # 苹果CMS v10 JSON 客户端 + 播放地址解析（含单元测试）
+│       ├── htmlsite.rs         # 网页规则站 CSS 选择器搜索
+│       ├── search.rs           # 聚合搜索并发调度 + 进度事件
+│       ├── live.rs             # 直播 m3u/txt 解析 + 测速（含单元测试）
+│       ├── room.rs             # 虎牙/抖音房间号解析
+│       ├── sniffer.rs          # 简易嗅探：HTML 直取 + Webview hook 窗口
+│       ├── storage.rs          # JSON 文件存储
+│       ├── http.rs             # 统一 HTTP（UA/超时/GBK 编码兜底）
+│       ├── builtin/            # 内置订阅 JSON
+│       └── commands.rs         # 全部 Tauri command
+├── samples/                    # 示例配置（demo-config.json / public-sources.json）
+├── docs/ARCHITECTURE.md        # 架构与数据流说明
+└── scripts/gen_icons.py        # 图标生成脚本（ico/icns/png）
+```
+
+## 本地构建
+
+前置条件：
+
+- Node.js >= 18、npm
+- Rust >= 1.77（rustup）
+- 平台依赖：
+  - Windows：WebView2（Win10/11 自带）、MSVC Build Tools
+  - macOS：Xcode Command Line Tools
+  - Linux：`libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`（Debian/Ubuntu）
+
+```bash
+npm install            # 安装前端依赖
+
+npm run tauri:dev      # 开发模式（Rust 变更会自动重编译）
+
+npm run tauri:build    # 三平台打包
+# 产物：src-tauri/target/release/bundle/
+#   Windows → nsis/*.exe
+#   macOS   → dmg/*.dmg
+#   Linux   → deb/ appimage/
+```
+
+Rust 端单元测试（CMS 地址构造 / 播放地址解析 / 直播解析）：
+
+```bash
+cd src-tauri && cargo test
+```
+
+## 配置格式
+
+完整兼容原项目两种格式：
+
+- **A 格式**：直接使用安卓 TVBox 订阅地址（解析 sites / lives；csp spider 站点会灰显）
+- **B 格式**（`tvbox-desktop/1`）：扩展字段统一放在 `tvboxDesktop` 键下，包括首页推荐位：
+
+```json
+{
+  "format": "tvbox-desktop/1",
+  "name": "我的订阅",
+  "sites": [
+    { "key": "example_cms", "name": "示例站", "type": "cms",
+      "api": "https://example.com/api.php/provide/vod", "searchable": 1 },
+    { "key": "tpl", "name": "占位符写法", "type": 3,
+      "api": "https://x.com/vod?ac={ac}&t={t}&pg={pg}&wd={wd}&ids={ids}", "searchable": 1 }
+  ],
+  "lives": [{ "name": "直播源", "type": 0, "url": "https://example.com/live.txt" }],
+  "tvboxDesktop": {
+    "home": {
+      "sections": [
+        { "title": "电影 · 最近更新", "site": "example_cms" },
+        { "title": "电影 · 动作片", "site": "example_cms", "typeId": 6 }
+      ]
+    }
+  }
+}
+```
+
+站点类型对照（与原项目 README 一致）：
+
+| type | 含义 | 桌面端 |
+| --- | --- | --- |
+| `3` / `"cms"` | 苹果CMS（api 可写基地址或 `{ac}{wd}{pg}{t}{ids}` 占位符模板） | ✅ 搜索 + 分类浏览 |
+| `1` / `"html"` | 网页规则站（rules 里 CSS 选择器） | ✅ 仅搜索 |
+| `4` / `"api"` | CMS 变体 | ✅ 搜索 + 分类浏览 |
+| `0` / `"spider"`（含 `csp_` 开头） | 需要配套 jar/dex | ❌ 灰显并说明 |
+| 其它 | 未知 | ❌ 灰显并说明 |
+
+## 嗅探功能说明（Tauri 下的已知限制）
+
+Electron 通过 `webContents` 可以完整拦截网络请求；Tauri 2 没有等价的 webview 网络层 API，本版本采用**双通道简易嗅探**：
+
+1. **HTML 直取（主通道，稳定）**：Rust reqwest 抓取网页源码，正则提取 m3u8/mp4/flv 直链，并追踪一层 iframe。大多数采集站的播放页源码里直接包含直链，命中率较高。
+2. **Webview hook（增强通道）**：创建独立嗅探窗口并注入 `initialization_script`，hook `fetch` / `XMLHttpRequest` / `HTMLMediaElement.src`，捕获到直链后以 `sniff://found?u=...` 触发导航，Rust 端 `on_navigation` 拦截并通过事件回传主窗口。该通道依赖系统 WebView 行为（WebView2 / WKWebView / webkit2gtk 兼容性差异需真机验证），失败时主通道仍可用。
+
+已知差距（v2 方向）：部分站点直链由 JS 动态计算且依赖 Referer/UA 校验，简易嗅探可能拿不到可用地址；后续可扩展 wry 自定义协议层拦截。
+
+## 与原版的行为差异
+
+1. **聚合搜索**：原版 Electron 在 renderer 里并发，本版本移到 Rust（`buffer_unordered(6)`），进度通过 `search:progress` 事件回传。
+2. **进度存储**：原版可能存 Electron userData；本版本统一存 Tauri `app_data_dir`（Windows: `%APPDATA%/com.tvbox.desktop`，macOS: `~/Library/Application Support/com.tvbox.desktop`，Linux: `~/.config/com.tvbox.desktop`），**首次运行不迁移原版数据**。
+3. **直播 txt 分隔符**：支持 `,` 后 `#` `|` `$` 分隔多线路，与常见直播源格式兼容。
+4. **XML CMS**（`at=xml`）暂不支持，主流采集站均为 JSON。
+
+## Roadmap
+
+- [ ] 外部播放器一键切换（tauri-plugin-opener）
+- [ ] 直播频道收藏
+- [ ] 配置定时自动刷新
+- [ ] wry 自定义协议层嗅探（替代简易正则）
+- [ ] 原版 Electron 数据迁移工具
