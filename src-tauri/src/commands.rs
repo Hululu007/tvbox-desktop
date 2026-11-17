@@ -42,7 +42,7 @@ pub async fn add_subscription_url(
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err(AppError::msg("订阅地址必须是 http(s) 链接"));
     }
-    let text = crate::http::fetch_text(&state.client, &url, &Default::default(), 20).await?;
+    let text = crate::http::fetch_text(&state.client, &url, &state.effective_ua(), &Default::default(), 20).await?;
     let cfg = TvboxConfig::parse_json(&text)?;
     let sub = Subscription {
         id: crate::storage::gen_id(),
@@ -50,6 +50,7 @@ pub async fn add_subscription_url(
         url,
         created_at: crate::storage::now(),
         updated_at: crate::storage::now(),
+        enabled: true,
         config: cfg,
     };
     with_runtime(&state, |rt| {
@@ -85,6 +86,7 @@ pub async fn add_subscription_local(
         url: path,
         created_at: crate::storage::now(),
         updated_at: crate::storage::now(),
+        enabled: true,
         config: cfg,
     };
     with_runtime(&state, |rt| {
@@ -115,6 +117,7 @@ pub async fn add_subscription_raw(
         url: "local:pasted".into(),
         created_at: crate::storage::now(),
         updated_at: crate::storage::now(),
+        enabled: true,
         config: cfg,
     };
     with_runtime(&state, |rt| {
@@ -162,6 +165,56 @@ pub async fn set_active_subscription(
 }
 
 #[tauri::command]
+pub async fn rename_subscription(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    name: String,
+) -> AppResult<()> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::msg("名称不能为空"));
+    }
+    with_runtime(&state, |rt| {
+        let s = rt
+            .subscriptions
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or_else(|| AppError::msg("订阅不存在"))?;
+        s.name = name;
+        crate::storage::save_all(&state.data_dir, rt)?;
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn set_subscription_enabled(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    with_runtime(&state, |rt| {
+        let s = rt
+            .subscriptions
+            .iter_mut()
+            .find(|s| s.id == id)
+            .ok_or_else(|| AppError::msg("订阅不存在"))?;
+        s.enabled = enabled;
+        // 禁用了当前激活订阅则切到第一个启用的
+        if !enabled && rt.active_id.as_deref() == Some(id.as_str()) {
+            rt.active_id = rt
+                .subscriptions
+                .iter()
+                .find(|s| s.enabled && s.id != id)
+                .map(|s| s.id.clone());
+        }
+        crate::storage::save_all(&state.data_dir, rt)?;
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn refresh_subscription(
     state: tauri::State<'_, AppState>,
     id: String,
@@ -180,7 +233,7 @@ pub async fn refresh_subscription(
     let cfg = if sub.id == crate::builtin::BUILTIN_ID {
         Ok(crate::builtin::builtin_config())
     } else if sub.url.starts_with("http://") || sub.url.starts_with("https://") {
-        let text = crate::http::fetch_text(&state.client, &sub.url, &Default::default(), 20).await?;
+        let text = crate::http::fetch_text(&state.client, &sub.url, &state.effective_ua(), &Default::default(), 20).await?;
         TvboxConfig::parse_json(&text)
     } else if std::path::Path::new(&sub.url).exists() {
         let text = std::fs::read_to_string(&sub.url)
@@ -242,14 +295,16 @@ pub async fn get_home_sections(
     }
 
     let client = state.client.clone();
+    let ua = state.effective_ua();
     let tasks = plan
         .into_iter()
         .map(|(title, site, type_id)| {
             let client = client.clone();
+            let ua = ua.clone();
             async move {
                 let items = match tokio::time::timeout(
                     std::time::Duration::from_secs(12),
-                    crate::cms::fetch_videolist(&client, &site, type_id.unwrap_or(0), 1),
+                    crate::cms::fetch_videolist(&client, &ua, &site, type_id.unwrap_or(0), 1),
                 )
                 .await
                 {
@@ -288,7 +343,7 @@ pub async fn get_categories(
     if !site.is_cms() {
         return Err(AppError::msg("该站点不支持分类浏览"));
     }
-    crate::cms::fetch_categories(&state.client, &site).await
+    crate::cms::fetch_categories(&state.client, &state.effective_ua(), &site).await
 }
 
 #[tauri::command]
@@ -310,7 +365,7 @@ pub async fn get_videolist(
     if !site.is_cms() {
         return Err(AppError::msg("该站点不支持列表浏览"));
     }
-    crate::cms::fetch_videolist(&state.client, &site, type_id, page).await
+    crate::cms::fetch_videolist(&state.client, &state.effective_ua(), &site, type_id, page).await
 }
 
 #[tauri::command]
@@ -331,7 +386,7 @@ pub async fn get_detail(
     if !site.is_cms() {
         return Err(AppError::msg("网页规则站暂不支持详情页，仅支持搜索"));
     }
-    crate::cms::fetch_detail(&state.client, &site, vod_id).await
+    crate::cms::fetch_detail(&state.client, &state.effective_ua(), &site, vod_id).await
 }
 
 #[tauri::command]
@@ -439,6 +494,111 @@ pub async fn clear_history(state: tauri::State<'_, AppState>) -> AppResult<()> {
     Ok(())
 }
 
+// ---------------- 外部播放器 ----------------
+
+/// 用本机播放器打开直链，返回实际使用的播放器名。
+/// 优先用设置页配置的命令模板（{url} 占位），否则自动探测。
+#[tauri::command]
+pub async fn open_external_player(
+    state: tauri::State<'_, AppState>,
+    url: String,
+) -> AppResult<String> {
+    let tpl = state
+        .settings
+        .read()
+        .ok()
+        .map(|s| s.ext_player.clone())
+        .unwrap_or_default();
+    crate::external::open_with_player(&url, Some(&tpl))
+}
+
+/// 检测本机已安装的播放器（设置页「检测本机播放器」按钮）
+#[tauri::command]
+pub async fn detect_players() -> Vec<String> {
+    crate::external::detect_players()
+}
+
+// ---------------- 应用设置 / 关于 ----------------
+
+#[tauri::command]
+pub async fn get_settings(state: tauri::State<'_, AppState>) -> AppResult<crate::settings::AppSettings> {
+    Ok(state
+        .settings
+        .read()
+        .map(|s| s.clone())
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub async fn save_settings(
+    state: tauri::State<'_, AppState>,
+    settings: crate::settings::AppSettings,
+) -> AppResult<crate::settings::AppSettings> {
+    let s = settings.sanitized();
+    crate::settings::save_settings(&state.data_dir, &s)?;
+    if let Ok(mut cur) = state.settings.write() {
+        *cur = s.clone();
+    }
+    Ok(s)
+}
+
+/// 版本 / 数据目录 / 运行环境（关于区展示）
+#[tauri::command]
+pub async fn get_app_info(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> AppResult<serde_json::Value> {
+    let version = app.package_info().version.to_string();
+    Ok(serde_json::json!({
+        "version": version,
+        "dataDir": state.data_dir.to_string_lossy(),
+        "os": std::env::consts::OS,
+        "runtime": "Tauri 2 · Rust · React",
+    }))
+}
+
+/// 在系统文件管理器中打开数据目录
+#[tauri::command]
+pub async fn open_data_dir(state: tauri::State<'_, AppState>) -> AppResult<()> {
+    let dir = &state.data_dir;
+    #[cfg(target_os = "windows")]
+    let spawned = std::process::Command::new("explorer").arg(dir).spawn();
+    #[cfg(target_os = "macos")]
+    let spawned = std::process::Command::new("open").arg(dir).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let spawned = std::process::Command::new("xdg-open").arg(dir).spawn();
+    spawned.map_err(|e| AppError::msg(format!("打开数据目录失败: {e}")))?;
+    Ok(())
+}
+
+// ---------------- 解析接口 / AI 总结 ----------------
+
+/// 用解析接口解析网页线路 -> 直链（设置页「解析接口」的试测 & 播放兜底）
+#[tauri::command]
+pub async fn resolve_parse(
+    state: tauri::State<'_, AppState>,
+    parse_url: String,
+    page_url: String,
+) -> AppResult<String> {
+    crate::parse::resolve_parse(&state.client, &state.effective_ua(), &parse_url, &page_url).await
+}
+
+/// AI 总结本集（OpenAI 兼容接口，只发送元信息，不发送播放地址）
+#[tauri::command]
+pub async fn ai_summary(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    episode: String,
+    type_name: String,
+    year: String,
+    actor: String,
+    content: String,
+) -> AppResult<String> {
+    let ai = state
+        .settings
+        .read()
+        .map(|s| s.ai.clone())
+        .unwrap_or_default();
+    crate::ai::ai_summary(&state.client, &ai, &name, &episode, &type_name, &year, &actor, &content).await
+}
+
 // ---------------- 嗅探 ----------------
 
 #[tauri::command]
@@ -446,7 +606,7 @@ pub async fn sniff_page(
     state: tauri::State<'_, AppState>,
     url: String,
 ) -> AppResult<Vec<String>> {
-    crate::sniffer::sniff_page(&state.client, &url).await
+    crate::sniffer::sniff_page(&state.client, &state.effective_ua(), &url).await
 }
 
 #[tauri::command]

@@ -103,10 +103,11 @@ pub fn build_cms_url(site: &SiteConfig, ac: &str, t: i64, pg: i64, wd: &str, ids
 
 async fn fetch_cms(
     client: &reqwest::Client,
+    ua: &str,
     site: &SiteConfig,
     url: &str,
 ) -> AppResult<CmsListResponse> {
-    let text = fetch_text(client, url, &site_headers(site), timeout_of(site)).await?;
+    let text = fetch_text(client, url, ua, &site_headers(site), timeout_of(site)).await?;
     let trimmed = text.trim_start();
     if !trimmed.starts_with('{') && !trimmed.starts_with('[') {
         return Err(AppError::Parse(format!(
@@ -132,17 +133,18 @@ fn vod_to_card(site: &SiteConfig, v: CmsVod) -> VideoCard {
 
 pub async fn fetch_categories(
     client: &reqwest::Client,
+    ua: &str,
     site: &SiteConfig,
 ) -> AppResult<Vec<CmsClass>> {
     if !site.is_cms() {
         return Err(AppError::msg("该站点不是 CMS 类型"));
     }
     let url = build_cms_url(site, "list", 0, 1, "", "");
-    let resp = fetch_cms(client, site, &url).await?;
+    let resp = fetch_cms(client, ua, site, &url).await?;
     if resp.class.is_empty() {
         // 部分 CMS list 接口为空时回退 videolist 带回 class
         let url2 = build_cms_url(site, "videolist", 0, 1, "", "");
-        let resp2 = fetch_cms(client, site, &url2).await?;
+        let resp2 = fetch_cms(client, ua, site, &url2).await?;
         if resp2.class.is_empty() {
             return Err(AppError::msg("站点未返回分类信息"));
         }
@@ -153,12 +155,13 @@ pub async fn fetch_categories(
 
 pub async fn fetch_videolist(
     client: &reqwest::Client,
+    ua: &str,
     site: &SiteConfig,
     type_id: i64,
     page: i64,
 ) -> AppResult<PagedVideos> {
     let url = build_cms_url(site, "videolist", type_id, page, "", "");
-    let resp = fetch_cms(client, site, &url).await?;
+    let resp = fetch_cms(client, ua, site, &url).await?;
     Ok(PagedVideos {
         page: resp.page,
         pagecount: resp.pagecount,
@@ -169,21 +172,23 @@ pub async fn fetch_videolist(
 
 pub async fn search_cms(
     client: &reqwest::Client,
+    ua: &str,
     site: &SiteConfig,
     wd: &str,
 ) -> AppResult<Vec<VideoCard>> {
     let url = build_cms_url(site, "videolist", 0, 1, wd, "");
-    let resp = fetch_cms(client, site, &url).await?;
+    let resp = fetch_cms(client, ua, site, &url).await?;
     Ok(resp.list.into_iter().map(|v| vod_to_card(site, v)).collect())
 }
 
 pub async fn fetch_detail(
     client: &reqwest::Client,
+    ua: &str,
     site: &SiteConfig,
     vod_id: i64,
 ) -> AppResult<VideoDetail> {
     let url = build_cms_url(site, "videolist", 0, 1, "", &vod_id.to_string());
-    let resp = fetch_cms(client, site, &url).await?;
+    let resp = fetch_cms(client, ua, site, &url).await?;
     let vod: CmsVod = resp
         .list
         .into_iter()

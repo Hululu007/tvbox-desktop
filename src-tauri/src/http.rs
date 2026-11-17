@@ -1,17 +1,17 @@
-// HTTP 抓取：统一 UA / 超时 / 编码兜底（GBK 站点常见）
+// HTTP 抓取：统一 UA / 超时 / 编码兜底（GBK 站点常见）。UA 由调用方传入（设置页可自定义）
 use crate::error::{AppError, AppResult};
-use crate::state::USER_AGENT;
 use reqwest::Client;
 
 pub async fn fetch_bytes(
     client: &Client,
     url: &str,
+    ua: &str,
     extra_headers: &std::collections::HashMap<String, String>,
     timeout_secs: u64,
 ) -> AppResult<Vec<u8>> {
     let mut req = client
         .get(url)
-        .header("User-Agent", USER_AGENT)
+        .header("User-Agent", ua)
         .timeout(std::time::Duration::from_secs(timeout_secs));
     for (k, v) in extra_headers {
         if !k.is_empty() {
@@ -35,12 +35,13 @@ pub async fn fetch_bytes(
 pub async fn fetch_text(
     client: &Client,
     url: &str,
+    ua: &str,
     extra_headers: &std::collections::HashMap<String, String>,
     timeout_secs: u64,
 ) -> AppResult<String> {
     let mut req = client
         .get(url)
-        .header("User-Agent", USER_AGENT)
+        .header("User-Agent", ua)
         .timeout(std::time::Duration::from_secs(timeout_secs));
     for (k, v) in extra_headers {
         if !k.is_empty() {

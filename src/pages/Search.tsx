@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import PosterCard from "../components/PosterCard";
 import { api, EVENTS, onEvent } from "../api";
-import type { SearchResultGroup } from "../types";
+import { useApp } from "../store";
+import type { SearchResultGroup, VideoCard } from "../types";
 
 interface ProgressInfo {
   done: number;
@@ -14,6 +15,7 @@ interface ProgressInfo {
 }
 
 export default function Search() {
+  const { settings } = useApp();
   const [params] = useSearchParams();
   const [kw, setKw] = useState(params.get("q") ?? "");
   const [results, setResults] = useState<SearchResultGroup[]>([]);
@@ -57,6 +59,13 @@ export default function Search() {
     return () => un?.();
   }, []);
 
+  // 搜索结果过滤「解说/速看/混剪」（设置页可关）
+  const commentaryRe = /解说|速看|混剪|一口气/;
+  const filterItems = (items: VideoCard[]): VideoCard[] =>
+    settings?.hide_commentary
+      ? items.filter((c) => !commentaryRe.test(c.name + c.remarks))
+      : items;
+
   return (
     <div>
       <h1 className="page-title">聚合搜索</h1>
@@ -95,29 +104,37 @@ export default function Search() {
         </div>
       )}
 
-      {results.map((g) => (
-        <div className="search-group" key={g.site_key}>
-          <div className="search-group-head">
-            <span style={{ fontWeight: 700 }}>{g.site_name}</span>
-            {g.ok ? (
-              <span className="cnt">{g.items.length} 条结果</span>
-            ) : (
-              <span className="err">失败：{g.message}</span>
+      {results.map((g) => {
+        const items = filterItems(g.items);
+        return (
+          <div className="search-group" key={g.site_key}>
+            <div className="search-group-head">
+              <span style={{ fontWeight: 700 }}>{g.site_name}</span>
+              {g.ok ? (
+                <span className="cnt">
+                  {items.length} 条结果
+                  {items.length < g.items.length && (
+                    <span className="filtered-hint">（已隐藏 {g.items.length - items.length} 条解说类）</span>
+                  )}
+                </span>
+              ) : (
+                <span className="err">失败：{g.message}</span>
+              )}
+            </div>
+            {items.length > 0 && (
+              <div className="grid">
+                {items.map((c) => (
+                  <PosterCard
+                    key={`${c.site_key}-${c.vod_id}`}
+                    card={c}
+                    showSite
+                  />
+                ))}
+              </div>
             )}
           </div>
-          {g.items.length > 0 && (
-            <div className="grid">
-              {g.items.map((c) => (
-                <PosterCard
-                  key={`${c.site_key}-${c.vod_id}`}
-                  card={c}
-                  showSite
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
+        );
+      })}
 
       {!searching && results.length === 0 && !error && (
         <div className="empty">输入关键词开始聚合搜索</div>

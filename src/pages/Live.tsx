@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Player from "../components/Player";
-import { api, EVENTS, onEvent } from "../api";
+import { api, EVENTS, onEvent, openExternal } from "../api";
 import { useApp } from "../store";
 import { isRoomUrl } from "../types";
 import type { LiveChannelGroup, LineSpeed } from "../types";
@@ -180,6 +180,14 @@ export default function Live() {
                     </span>
                   )}
                   <div className="spacer" />
+                  <button
+                    className="btn small"
+                    disabled={!playUrl}
+                    onClick={() => playUrl && openExternal(playUrl, toast)}
+                    title="用 PotPlayer / VLC / mpv 打开当前直播流"
+                  >
+                    外部播放
+                  </button>
                   <button className="btn small" disabled={testing} onClick={speedTest}>
                     {testing ? "测速中…" : "线路测速"}
                   </button>

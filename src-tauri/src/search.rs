@@ -5,26 +5,29 @@ use crate::state::AppState;
 use futures::stream::{self, StreamExt};
 use tauri::Emitter;
 
-const PER_SITE_TIMEOUT_SECS: u64 = 12;
 const MAX_CONCURRENCY: usize = 6;
 
-async fn search_site(state: &AppState, site: SiteConfig, wd: String) -> SearchResultGroup {
+async fn search_site(
+    state: &AppState,
+    site: SiteConfig,
+    wd: String,
+    ua: &str,
+    timeout_secs: u64,
+) -> SearchResultGroup {
     let site_key = site.key.clone();
     let site_name = site.name.clone();
     let client = state.client.clone();
+    let ua = ua.to_string();
     let task = async {
         if site.is_cms() {
-            crate::cms::search_cms(&client, &site, &wd).await
+            crate::cms::search_cms(&client, &ua, &site, &wd).await
         } else if site.kind == "html" {
-            crate::htmlsite::search_html_site(&client, &site, &wd).await
+            crate::htmlsite::search_html_site(&client, &ua, &site, &wd).await
         } else {
             Err(crate::error::AppError::msg("站点类型不支持搜索"))
         }
     };
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(PER_SITE_TIMEOUT_SECS),
-        task,
-    )
+    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), task)
     .await
     {
         Ok(Ok(items)) => SearchResultGroup {
@@ -75,6 +78,14 @@ pub async fn aggregate_search(
         .filter(|s| s.is_searchable())
         .collect();
     let total = sites.len();
+    let (concurrency, timeout_secs, ua) = {
+        // 设置页可调：并发数（1-32）、请求超时、自定义 UA；读取失败则用默认值
+        state
+            .settings
+            .read()
+            .map(|s| (s.search_concurrency, s.request_timeout, s.effective_ua()))
+            .unwrap_or((MAX_CONCURRENCY, 12, crate::state::USER_AGENT.to_string()))
+    };
     let app_handle = app.clone();
 
     let results: Vec<SearchResultGroup> = stream::iter(sites.into_iter().enumerate())
@@ -82,8 +93,9 @@ pub async fn aggregate_search(
             let state_ref = state;
             let app = app_handle.clone();
             let wd = wd.clone();
+            let ua = ua.clone();
             async move {
-                let group = search_site(state_ref, site, wd).await;
+                let group = search_site(state_ref, site, wd, &ua, timeout_secs).await;
                 let _ = app.emit(
                     "search:progress",
                     serde_json::json!({
@@ -98,7 +110,7 @@ pub async fn aggregate_search(
                 group
             }
         })
-        .buffer_unordered(MAX_CONCURRENCY)
+        .buffer_unordered(concurrency)
         .collect::<Vec<_>>()
         .await;
 

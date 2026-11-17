@@ -1,5 +1,34 @@
 # 更新日志
 
+## 1.2.1（2026-11-16）
+
+修复一批 Rust 编译错误，本次已通过 `cargo check --all-targets` 全量真实验证（192 个依赖 + 全部自研代码，零错误零警告）：
+
+- 修复：`ai.rs` E0599 —— 代码使用 `.json()` 但 reqwest 未启用 `json` feature（`Cargo.toml` 补齐）
+- 修复：`parse.rs` E0282 —— 删除从未使用、类型无法推断的死变量 `headers`
+- 修复：`cms.rs` E0308 —— `apply_template(tpl, ...)` 的 `String` 参数改为借用 `&tpl`
+- 修复：`cms.rs` E0382 —— 选集解析先计算 `is_web` 再把 `url` move 进结构体
+- 清理：`parse.rs` / `commands.rs` 未用导入，`search.rs` 死常量改接设置默认并发数，`models.rs` 驼峰字段 `warningText` 补 `#[allow(non_snake_case)]`
+- 版本号统一 1.2.1（此前 CHANGELOG 与 Cargo.toml / tauri.conf.json / package.json 不一致）
+
+## 1.2.0（2026-11-16）
+
+对齐原版设置页（配置源 / 解析接口 / 通用 / AI 总结 / 关于）：
+
+- 新增：订阅启用开关、重命名、同步时间显示，列表统计（站点/直播/解析数）；禁用订阅自动回退生效配置
+- 新增：解析接口（parses）兜底——网页线路嗅探失败后按订阅 parses 顺序依次解析，设置页可测试接口
+- 新增：通用设置并持久化到 settings.json：聚合搜索并发数（1-32）、请求超时、界面密度（舒适/紧凑）、强调色（CSS 变量实时生效）、搜索结果过滤解说/速看/混剪、自定义 User-Agent（贯通 CMS/搜索/直播/嗅探全链路）
+- 新增：外部播放器命令模板（{url} 占位，支持 --fullscreen 等参数）+「检测本机播放器」
+- 新增：AI 总结本集（DeepSeek / OpenAI 兼容接口，Rust 端调用，仅发送片名/集名/类型/年份/演员/简介，不发送播放地址）
+- 新增：关于区（版本 / 数据目录一键打开 / 运行环境 / 免责声明）
+- Tauri 命令 25 → 33 个，新增模块 settings.rs / parse.rs / ai.rs
+
+## 1.0.1（2026-11-16）
+
+- 新增：一键外部播放器。详情页/直播页/嗅探结果均可把直链交给本机 PotPlayer / VLC / mpv / IINA；未配置时按常见安装路径自动探测，设置页可手动指定程序路径（Rust `std::process` 拉起，新增 `open_external_player` 命令与 `external.rs` 模块）
+- 修复：Windows 下 `tauri dev` 启动即崩（Vite 监听 `src-tauri/target/` 碰到 Cargo 锁定的 .exe 抛 EBUSY，现已在 `vite.config.ts` 忽略 Rust 构建目录）
+- 修复：`cms.rs` 两处编译错误（模板参数 `&str` 借用、选集解析 move 后借用）
+
 ## 1.0.0（2026-11-16）
 
 首个 Tauri 2 重写版，基于 hgtuj5688/tvbox-desktop（Electron）全功能对齐：

@@ -9,7 +9,13 @@
 
 | 功能 | 原版（Electron） | 本重写版（Tauri 2） |
 | --- | --- | --- |
-| 订阅源管理（URL / 本地 / 粘贴 / 刷新 / 激活） | ✅ | ✅ |
+| 订阅源管理（URL / 本地 / 粘贴 / 刷新 / 激活 / 重命名） | ✅ | ✅ |
+| 订阅启用开关 + 同步时间显示 | ✅ | ✅ |
+| 解析接口（parses）：播放嗅探失败后依次兜底 | ✅ | ✅（Rust resolve_parse，多接口自动回退） |
+| 通用设置（并发数 / 超时 / 密度 / 强调色 / 过滤解说 / 自定义 UA） | ✅ | ✅（settings.json 持久化） |
+| 外部播放器命令模板（{url} 占位）+ 本机播放器检测 | ✅ | ✅ |
+| AI 总结本集（DeepSeek / OpenAI 兼容） | ✅ | ✅（Rust 侧调用，只发元信息） |
+| 关于页（版本 / 数据目录 / 免责声明） | ✅ | ✅（open_data_dir） |
 | TVBox A/B 双格式配置兼容 | ✅ | ✅ |
 | 站点类型矩阵（cms/api/html 支持，spider/unknown 灰显） | ✅ | ✅ |
 | 分类浏览 + 分页 | ✅ | ✅ |
@@ -22,8 +28,8 @@
 | 直播线路测速 | ✅ | ✅（Rust 并发测速，Range 请求 6s 超时） |
 | 虎牙/抖音房间号（huya:// douyin://） | ✅ | ✅（页面结构解析，实验性） |
 | 首页推荐位（tvboxDesktop.home.sections） | ✅ | ✅（无 sections 时自动回退到站点最新列表） |
-| 网页线路嗅探 | ✅（Electron webContents） | ⚠ 简易版：HTML 直取正则提取 + Webview hook 窗口（详见下文） |
-| 一键外部播放器 | ✅ | ⚠ v2 规划（后端已内置 opener 插件，前端入口待接） |
+| 网页线路嗅探 | ✅（Electron webContents） | ✅ 双通道简易版：HTML 直取正则提取 + Webview hook 窗口（详见下文） |
+| 一键外部播放器 | ✅ | ✅ Rust 直接拉起 PotPlayer / VLC / mpv / IINA（自动探测 + 设置页可指定路径） |
 
 ## 技术栈
 
@@ -58,6 +64,10 @@
 │       ├── live.rs             # 直播 m3u/txt 解析 + 测速（含单元测试）
 │       ├── room.rs             # 虎牙/抖音房间号解析
 │       ├── sniffer.rs          # 简易嗅探：HTML 直取 + Webview hook 窗口
+│       ├── external.rs         # 外部播放器：命令模板 {url} + 自动探测 PotPlayer/VLC/mpv
+│       ├── settings.rs         # 应用设置 settings.json（并发/超时/UA/强调色/AI 配置）
+│       ├── parse.rs            # 解析接口兜底：嗅探失败后依次尝试 parses
+│       ├── ai.rs               # AI 剧情总结（OpenAI 兼容 /chat/completions）
 │       ├── storage.rs          # JSON 文件存储
 │       ├── http.rs             # 统一 HTTP（UA/超时/GBK 编码兜底）
 │       ├── builtin/            # 内置订阅 JSON
@@ -124,6 +134,53 @@ cd src-tauri && cargo test
   }
 }
 ```
+# **支持正版，反对盗版**
+
+## 订阅源说明
+**本项目为壳项目不内置订阅源**
+如有需求请自行收集[苹果CMSV10(MACcmsV10)](https://github.com/magicblack/maccms10)源，[参考源](https://github.com/hafrey1/LunaTV-config)
+```json
+{
+  "format": "tvbox-desktop/1",
+  "name": "公开可用源（苹果CMS 采集站）",
+  "note": "改写自 hgtuj5688/tvbox-desktop 的 samples/public-sources.json（MIT）。实测存活的公开采集接口，全部是标准苹果CMS v10 的 /api.php/provide/vod。这类站点随时可能失效，失效后在设置页刷新或删除即可，可参考hafrey1/LunaTV-config",
+  "sites": [
+    {
+      "key": "xxx",
+      "name": "xxx资源",
+      "type": "cms",
+      "api": "https://api.xxxx.com/api.php/provide/vod",
+      "searchable": 1
+    },
+    {
+      "key": "yyy",
+      "name": "yyy资源",
+      "type": "cms",
+      "api": "https://cj.yyy.com/api.php/provide/vod",
+      "searchable": 1
+    }
+  ],
+  "lives": [
+    {
+      "name": "公开直播源·IPv4（txt）",
+      "type": 0,
+      "url": "https://live.xxx.top/tv/iptv4.txt"
+    }
+  ],
+  "tvboxDesktop": {
+    "home": {
+      "sections": [
+        { "title": "电影 · 最近更新", "site": "xxx" },
+        { "title": "电影 · 动作片", "site": "yyy", "typeId": 6 },
+        { "title": "电视剧 · 国产剧", "site": "zzz", "typeId": 13 },
+        { "title": "动漫 · 日本", "site": "aaa", "typeId": 42 },
+        { "title": "综艺 · 最近更新", "site": "bbb" }
+      ]
+    }
+  }
+}
+
+```
 
 站点类型对照（与原项目 README 一致）：
 
@@ -134,6 +191,14 @@ cd src-tauri && cargo test
 | `4` / `"api"` | CMS 变体 | ✅ 搜索 + 分类浏览 |
 | `0` / `"spider"`（含 `csp_` 开头） | 需要配套 jar/dex | ❌ 灰显并说明 |
 | 其它 | 未知 | ❌ 灰显并说明 |
+
+## 外部播放器
+
+详情页「用外部播放器打开」/ 直播页「外部播放」/ 嗅探结果里的「外部播放」按钮，会把当前直链交给本机播放器：
+
+1. 设置页可手动指定播放器程序路径（Windows 下常指 PotPlayer 的 `PotPlayerMini64.exe`）；
+2. 未指定时按常见安装位置自动探测：PotPlayer → VLC → mpv（macOS 为 IINA → mpv → VLC，Linux 为 mpv → VLC → Celluloid → SMPlayer）；
+3. 全部未命中时返回明确错误，提示到设置页指定路径。适合内网/需要硬解的场景，播放行为与进度记忆均由外部播放器接管。
 
 ## 嗅探功能说明（Tauri 下的已知限制）
 
@@ -153,12 +218,11 @@ Electron 通过 `webContents` 可以完整拦截网络请求；Tauri 2 没有等
 
 ## Roadmap
 
-- [ ] 外部播放器一键切换（tauri-plugin-opener）
+- [x] 外部播放器一键切换（Rust `std::process` 拉起，自动探测 + 手动指定）
 - [ ] 直播频道收藏
 - [ ] 配置定时自动刷新
 - [ ] wry 自定义协议层嗅探（替代简易正则）
 - [ ] 原版 Electron 数据迁移工具
-- [ ] 
 # 免责声明
 - 本项目只是一个播放器壳，不含任何影视内容，也不提供、不托管、不存储任何视频资源。
 - 所有内容都来自使用者自己添加的第三方配置订阅。软件按订阅里写的地址去请求，就像浏览器按你输入的网址去访问一样。

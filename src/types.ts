@@ -87,11 +87,18 @@ export interface TvboxDesktopExt {
   home: { sections: HomeSection[] };
 }
 
+export interface ParseConfig {
+  name: string;
+  type: number;
+  url: string;
+}
+
 export interface TvboxConfig {
   format?: string;
   name?: string;
   sites: SiteConfig[];
   lives: LiveGroupRaw[];
+  parses: ParseConfig[];
   ext: TvboxDesktopExt;
 }
 
@@ -101,6 +108,7 @@ export interface Subscription {
   url: string;
   created_at: number;
   updated_at: number;
+  enabled: boolean;
   config: TvboxConfig;
 }
 
@@ -157,6 +165,32 @@ export interface HomeSectionData {
   site_key: string;
   site_name: string;
   items: VideoCard[];
+}
+
+// ---------- 应用设置（与 Rust settings.rs 一一对应） ----------
+
+export interface AiSettings {
+  api_key: string;
+  model: string;
+  base_url: string;
+}
+
+export interface AppSettings {
+  search_concurrency: number;
+  request_timeout: number;
+  hide_commentary: boolean;
+  density: string; // cozy | compact
+  accent: string; // #RRGGBB
+  ua: string;
+  ext_player: string; // 命令模板，{url} 占位；空 = 自动探测
+  ai: AiSettings;
+}
+
+export interface AppInfo {
+  version: string;
+  dataDir: string;
+  os: string;
+  runtime: string;
 }
 
 // 与 Rust room.rs 对齐

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import Player from "../components/Player";
-import { api, EVENTS, onEvent } from "../api";
+import { api, EVENTS, onEvent, openExternal } from "../api";
 import { useApp } from "../store";
 import { isRoomUrl } from "../types";
 import type { VideoDetail } from "../types";
 
 export default function Detail() {
   const { siteKey, vodId } = useParams();
-  const { toast, favorites, history, reloadFavorites } = useApp();
+  const { toast, favorites, history, reloadFavorites, state: appState } = useApp();
+  const parses = appState?.activeConfig?.parses ?? [];
 
   const [detail, setDetail] = useState<VideoDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -18,6 +19,8 @@ export default function Detail() {
   const [startPos, setStartPos] = useState(0);
   const [sniffing, setSniffing] = useState(false);
   const [foundLinks, setFoundLinks] = useState<string[]>([]);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiText, setAiText] = useState("");
 
   const detailRef = useRef<VideoDetail | null>(null);
   const curRef = useRef<{ sourceIdx: number; epIdx: number }>({
@@ -156,6 +159,29 @@ export default function Detail() {
         if (links.length > 0) {
           setFoundLinks(links);
           toast(`HTML 直取嗅探到 ${links.length} 条直链，请选择`, "success");
+        } else if (parses.length > 0) {
+          // 解析接口兜底：依次尝试订阅里的 parses，失败的自动换下一个
+          toast("页面未含直链，尝试解析接口…");
+          let resolved: string | null = null;
+          for (const p of parses) {
+            if (!p.url) continue;
+            try {
+              const u = await api.resolveParse(p.url, ep.url);
+              if (u) {
+                resolved = u;
+                toast(`已用解析接口「${p.name || "未命名"}」取得直链`, "success");
+                break;
+              }
+            } catch {
+              /* 换下一个接口 */
+            }
+          }
+          if (resolved) {
+            setPlayUrl(resolved);
+          } else {
+            toast("解析接口均未命中，已打开嗅探窗口…");
+            await api.openSniffer(ep.url);
+          }
         } else {
           // 增强通道：嗅探窗口
           toast("页面未直接包含直链，已打开嗅探窗口…");
@@ -170,6 +196,30 @@ export default function Detail() {
       resolveAndPlay(ep.url, ep.name);
     } else {
       setPlayUrl(ep.url);
+    }
+  };
+
+  // AI 总结本集（只发送元信息，不发送播放地址）
+  const runAiSummary = async () => {
+    if (!detail || aiBusy) return;
+    setAiBusy(true);
+    setAiText("");
+    const { sourceIdx: si, epIdx: ei } = curRef.current;
+    const ep = detail.sources[si]?.episodes[ei];
+    try {
+      const text = await api.aiSummary({
+        name: detail.name,
+        episode: ep?.name ?? "",
+        typeName: detail.type_name,
+        year: detail.year,
+        actor: detail.actor,
+        content: detail.content,
+      });
+      setAiText(text);
+    } catch (e) {
+      toast(String(e), "error");
+    } finally {
+      setAiBusy(false);
     }
   };
 
@@ -310,22 +360,29 @@ export default function Detail() {
             </div>
           ) : (
             foundLinks.map((u, i) => (
-              <div
-                key={i}
-                className="ep-btn"
-                style={{
-                  display: "block",
-                  marginBottom: 8,
-                  textAlign: "left",
-                  padding: "10px 12px",
-                }}
-                onClick={() => {
-                  setPlayUrl(u);
-                  setFoundLinks([]);
-                  api.closeSniffer().catch(() => undefined);
-                }}
-              >
-                ▶ 播放：{u}
+              <div key={i} className="row" style={{ marginBottom: 8 }}>
+                <div
+                  className="ep-btn"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    textAlign: "left",
+                    padding: "10px 12px",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  onClick={() => {
+                    setPlayUrl(u);
+                    setFoundLinks([]);
+                    api.closeSniffer().catch(() => undefined);
+                  }}
+                >
+                  ▶ 内置播放：{u}
+                </div>
+                <button className="btn small" onClick={() => openExternal(u, toast)}>
+                  外部播放
+                </button>
               </div>
             ))
           )}
@@ -335,14 +392,50 @@ export default function Detail() {
       {/* 播放器 */}
       {playUrl && (
         <div style={{ marginTop: 20 }}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <b>正在播放</b>
+            <div className="spacer" />
+            <button
+              className="btn small"
+              disabled={aiBusy}
+              onClick={runAiSummary}
+              title="把片名/集名/类型/年份/演员/简介发给已配置的 AI 模型，生成本集剧情梗概（设置页配置 API Key）"
+            >
+              {aiBusy ? "AI 总结中…" : "AI 总结本集"}
+            </button>
+            <button
+              className="btn small"
+              onClick={() => openExternal(playUrl, toast)}
+              title="用 PotPlayer / VLC / mpv 打开当前直链（命令可在设置页配置）"
+            >
+              用外部播放器打开
+            </button>
+          </div>
           <Player
             url={playUrl}
             poster={detail.pic}
             startPos={startPos}
             onProgress={handleProgress}
           />
+          {aiBusy && (
+            <div className="card ai-card" style={{ marginTop: 12 }}>
+              AI 正在生成这一集的剧情梗概…（首次调用可能需要几十秒）
+            </div>
+          )}
+          {aiText && (
+            <div className="card ai-card" style={{ marginTop: 12 }}>
+              <div className="row" style={{ marginBottom: 8 }}>
+                <b>AI 剧情梗概</b>
+                <div className="spacer" />
+                <button className="btn small" onClick={() => setAiText("")}>
+                  收起
+                </button>
+              </div>
+              <div style={{ lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{aiText}</div>
+            </div>
+          )}
           <div style={{ color: "#9ca3af", fontSize: 12, marginTop: 8 }}>
-            观看进度每 8 秒自动保存；网页线路（选集右上角标“嗅”）会先嗅探直链再播放。
+            观看进度每 8 秒自动保存；网页线路（选集右上角标“嗅”）会先嗅探直链再播放，嗅探不到时依次尝试解析接口，也可一键交给外部播放器。
           </div>
         </div>
       )}

@@ -16,12 +16,13 @@
 │    ├─ 内容: get_home_sections / get_categories / get_videolist / get_detail      │
 │    ├─ 搜索: aggregate_search（并发调度）                                          │
 │    ├─ 直播: get_live_channels / speed_test_lines / resolve_room_url              │
+│    ├─ 外部播放器: open_external_player（自动探测 + 指定路径）                        │
 │    ├─ 收藏历史: add/remove/get_favorites / save_progress / get/remove/clear      │
 │    └─ 嗅探: sniff_page（HTML直取）/ open_sniffer / close_sniffer                  │
 │                                                                                  │
 │  state.rs  AppState { data_dir, reqwest::Client, Mutex<RuntimeState> }           │
 │  storage.rs JSON 文件: subscriptions.json / favorites.json / history.json        │
-│  cms.rs / htmlsite.rs / search.rs / live.rs / room.rs / sniffer.rs               │
+│  cms.rs / htmlsite.rs / search.rs / live.rs / room.rs / sniffer.rs / external.rs  │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
 

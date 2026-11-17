@@ -13,6 +13,8 @@ import type {
   FavoriteItem,
   HistoryItem,
   HomeSectionData,
+  AppSettings,
+  AppInfo,
 } from "./types";
 
 export const api = {
@@ -26,6 +28,10 @@ export const api = {
     invoke<Subscription>("add_subscription_raw", { jsonText, name }),
   removeSubscription: (id: string) =>
     invoke<void>("remove_subscription", { id }),
+  renameSubscription: (id: string, name: string) =>
+    invoke<void>("rename_subscription", { id, name }),
+  setSubscriptionEnabled: (id: string, enabled: boolean) =>
+    invoke<void>("set_subscription_enabled", { id, enabled }),
   setActiveSubscription: (id: string) =>
     invoke<void>("set_active_subscription", { id }),
   refreshSubscription: (id: string) =>
@@ -60,6 +66,30 @@ export const api = {
   sniffPage: (url: string) => invoke<string[]>("sniff_page", { url }),
   openSniffer: (url: string) => invoke<void>("open_sniffer", { url }),
   closeSniffer: () => invoke<void>("close_sniffer"),
+
+  // 外部播放器：返回实际使用的播放器名（模板读设置页配置，空则自动探测）
+  openExternalPlayer: (url: string) =>
+    invoke<string>("open_external_player", { url }),
+  detectPlayers: () => invoke<string[]>("detect_players"),
+
+  // 应用设置
+  getSettings: () => invoke<AppSettings>("get_settings"),
+  saveSettings: (settings: AppSettings) =>
+    invoke<AppSettings>("save_settings", { settings }),
+  getAppInfo: () => invoke<AppInfo>("get_app_info"),
+  openDataDir: () => invoke<void>("open_data_dir"),
+
+  // 解析接口 / AI 总结
+  resolveParse: (parseUrl: string, pageUrl: string) =>
+    invoke<string>("resolve_parse", { parseUrl, pageUrl }),
+  aiSummary: (args: {
+    name: string;
+    episode: string;
+    typeName: string;
+    year: string;
+    actor: string;
+    content: string;
+  }) => invoke<string>("ai_summary", args),
 };
 
 export type Unlisten = () => void;
@@ -78,3 +108,16 @@ export const EVENTS = {
   SNIFF_FOUND: "sniff:found",
   LIVE_SPEED: "live:speed",
 } as const;
+
+// 通用：调用外部播放器并提示结果（模板由 Rust 端从设置读取）
+export async function openExternal(
+  url: string,
+  toastFn: (t: string, k?: "info" | "error" | "success") => void
+): Promise<void> {
+  try {
+    const name = await api.openExternalPlayer(url);
+    toastFn(`已用 ${name} 打开`, "success");
+  } catch (e) {
+    toastFn(String(e), "error");
+  }
+}

@@ -189,9 +189,9 @@ pub struct TvboxConfig {
     pub spider: Option<String>,
     #[serde(default)]
     pub wallpaper: Option<String>,
-    // A 格式配置里的原始字段名就是驼峰，保留以完整兼容（消警告）
-    #[allow(non_snake_case)]
+    // A 格式兼容字段，保持与 TVBox 原配置一致的驼峰命名
     #[serde(default)]
+    #[allow(non_snake_case)]
     pub warningText: Option<String>,
 }
 
@@ -348,6 +348,10 @@ pub struct LineSpeed {
 
 // ---------- 本地存储 ----------
 
+pub fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscription {
     pub id: String,
@@ -356,6 +360,9 @@ pub struct Subscription {
     pub url: String,
     pub created_at: i64,
     pub updated_at: i64,
+    /// 启用开关：禁用的订阅不参与生效配置（老配置文件缺省为 true）
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub config: TvboxConfig,
 }
 

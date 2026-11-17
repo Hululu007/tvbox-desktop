@@ -137,6 +137,14 @@ pub async fn load_live_groups(state: &AppState) -> AppResult<Vec<LiveChannelGrou
     let Some(cfg) = cfg else {
         return Ok(vec![]);
     };
+    let (ua, timeout) = {
+        let s = state
+            .settings
+            .read()
+            .map(|s| (s.effective_ua(), s.request_timeout))
+            .unwrap_or((crate::state::USER_AGENT.to_string(), 15));
+        s
+    };
     let mut out: Vec<LiveChannelGroup> = Vec::new();
     for live in &cfg.lives {
         // A 格式内嵌
@@ -156,7 +164,7 @@ pub async fn load_live_groups(state: &AppState) -> AppResult<Vec<LiveChannelGrou
         if url.is_empty() {
             continue;
         }
-        match fetch_text(&state.client, url, &Default::default(), 15).await {
+        match fetch_text(&state.client, url, &ua, &Default::default(), timeout.min(30)).await {
             Ok(text) => {
                 for g in parse_live_text(&text) {
                     for ch in g.channels {
@@ -180,12 +188,14 @@ pub async fn speed_test_lines(
 ) -> Vec<LineSpeed> {
     let total = urls.len();
     let app = app.clone();
+    let ua = state.effective_ua();
     let results: Vec<LineSpeed> = stream::iter(urls.into_iter().enumerate())
         .map(|(idx, url)| {
             let client = state.client.clone();
             let app = app.clone();
+            let ua = ua.clone();
             async move {
-                let ok_delay = test_line(&client, &url).await;
+                let ok_delay = test_line(&client, &ua, &url).await;
                 let ls = match ok_delay {
                     Ok(ms) => LineSpeed {
                         url,
@@ -211,12 +221,11 @@ pub async fn speed_test_lines(
     results
 }
 
-async fn test_line(client: &reqwest::Client, url: &str) -> AppResult<i64> {
-    use crate::state::USER_AGENT;
+async fn test_line(client: &reqwest::Client, ua: &str, url: &str) -> AppResult<i64> {
     let start = std::time::Instant::now();
     let resp = client
         .get(url)
-        .header("User-Agent", USER_AGENT)
+        .header("User-Agent", ua)
         .header("Range", "bytes=0-2048")
         .timeout(std::time::Duration::from_secs(6))
         .send()

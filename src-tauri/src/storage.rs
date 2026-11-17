@@ -65,6 +65,7 @@ pub fn load_all(dir: &Path) -> AppResult<RuntimeState> {
                 url: crate::builtin::BUILTIN_ID.to_string(),
                 created_at: now_ms(),
                 updated_at: now_ms(),
+                enabled: true,
                 config: cfg,
             }];
             let rt = RuntimeState {

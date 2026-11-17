@@ -57,6 +57,7 @@ fn abs_url(base: &str, link: &str) -> String {
 
 pub async fn search_html_site(
     client: &reqwest::Client,
+    ua: &str,
     site: &SiteConfig,
     wd: &str,
 ) -> AppResult<Vec<VideoCard>> {
@@ -73,13 +74,7 @@ pub async fn search_html_site(
         format!("{api}?wd={{wd}}")
     };
     let url = search_tpl.replace("{wd}", &crate::cms::url_encode(wd));
-    let html_text = fetch_text(
-        client,
-        &url,
-        &site.header.clone(),
-        site.timeout.unwrap_or(15),
-    )
-    .await?;
+    let html_text = fetch_text(client, &url, ua, &site.header.clone(), site.timeout.unwrap_or(15)).await?;
     let doc = Html::parse_document(&html_text);
     let list_sel = Selector::parse(&rules.list)
         .map_err(|_| AppError::msg(format!("rules.list 选择器无效: {}", rules.list)))?;

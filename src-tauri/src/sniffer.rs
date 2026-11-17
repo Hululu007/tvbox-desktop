@@ -95,15 +95,16 @@ fn extract_iframes(html: &str, base: &str) -> Vec<String> {
 /// HTML 直取嗅探（主通道，纯 Rust 稳定可用）
 pub async fn sniff_page(
     client: &reqwest::Client,
+    ua: &str,
     page_url: &str,
 ) -> AppResult<Vec<String>> {
-    let html = fetch_text(client, page_url, &Default::default(), 15).await?;
+    let html = fetch_text(client, page_url, ua, &Default::default(), 15).await?;
     let mut found = extract_links(&html);
     for iframe in extract_iframes(&html, page_url) {
         if found.len() >= 10 {
             break;
         }
-        if let Ok(sub) = fetch_text(client, &iframe, &Default::default(), 10).await {
+        if let Ok(sub) = fetch_text(client, &iframe, ua, &Default::default(), 10).await {
             for u in extract_links(&sub) {
                 if !found.contains(&u) {
                     found.push(u);

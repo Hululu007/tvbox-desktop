@@ -1,6 +1,6 @@
 [package]
 name = "tvbox-desktop-tauri"
-version = "1.0.0"
+version = "1.2.1"
 description = "TVBox Desktop 重写版：Tauri 2 + Rust + React"
 authors = ["you"]
 edition = "2021"
@@ -24,6 +24,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
   "gzip",
   "brotli",
+  "json",
 ] }
 encoding_rs = "0.8"
 regex = "1"
